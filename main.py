@@ -31,146 +31,287 @@ class Bot:
 
         if message == '/start':
             self.set_state(user[0], 'menu')
+            themes = self.get_themes()
             self.bot.messaging.send_message(
                 params[0].peer,
                 '\U0001F44B Привет!\n'
-                'Я — бот для удобного подсчета трат.',
+                'Я — бот, который поможет тебе освоиться в нашем дружном коллективе!\n'
+                'Нажми на одну из тем, чтобы посмотреть подробную информацию по ней.',
                 [
                     interactive_media.InteractiveMediaGroup(
                         [
-
                             interactive_media.InteractiveMedia(
-                                1,
-                                interactive_media.InteractiveMediaButton('add', 'Добавить расходы'),
+                                i,
+                                interactive_media.InteractiveMediaButton(themes[i][0], themes[i][1]),
                                 'primary'
+                            ) for i in range(len(themes))
+                        ]
+                    ),
+                    interactive_media.InteractiveMediaGroup(
+                        [
+                            interactive_media.InteractiveMedia(
+                                len(themes) + 1,
+                                interactive_media.InteractiveMediaButton('themes_manager',
+                                                                         'Панель управления базой знаний')
                             ),
                             interactive_media.InteractiveMedia(
-                                2,
-                                interactive_media.InteractiveMediaButton('reset', 'Изменить бюджет'),
-                                'primary'
+                                len(themes) + 2,
+                                interactive_media.InteractiveMediaButton('schedule_manager',
+                                                                         'Менеджер отложенных сообщений')
                             ),
                             interactive_media.InteractiveMedia(
-                                3,
-                                interactive_media.InteractiveMediaButton('view_spending', 'Посмотреть расходы'),
-                                'primary'
-                            ),
-                            interactive_media.InteractiveMedia(
-                                4,
-                                interactive_media.InteractiveMediaButton('reset_spending', 'Обнулить траты'),
-                                'danger'
+                                len(themes) + 2,
+                                interactive_media.InteractiveMediaButton('add_notice',
+                                                                         'Сделать объявление')
                             )
                         ]
                     )
                 ]
             )
-        elif state == 'reset':
-            try:
-                budget = abs(float(message.strip()))
-                self.set_budget(budget)
-                self.bot.messaging.send_message(
-                    self.bot.users.get_user_peer_by_id(user[0]),
-                    '\U0001F44C Готово.'
-                )
-                self.set_state(user[0], 'menu')
-            except ValueError:
-                self.bot.messaging.send_message(
-                    self.bot.users.get_user_peer_by_id(user[0]),
-                    'Кажется, это не число.\nМне нужно что-то такое: 1234.56'
-                )
-        elif state == 'menu':
-            try:
-                val = float(message.strip())
-                state_info = json.dumps({'val': val})
-                self.set_state_info(user[0], state_info)
-                self.bot.messaging.send_message(
-                    self.bot.users.get_user_peer_by_id(user[0]),
-                    'Пришли короткое описание траты.',
-                    [
-                        interactive_media.InteractiveMediaGroup(
-                            [
+        elif state == 'add_theme':
+            if len(message.strip().split()) >= 2:
+                name = message.strip().split()[-1]
+                label = ' '.join(message.strip().split()[:-1])
+                if name not in [i[0] for i in self.get_themes()]:
+                    self.add_theme(name, label)
+                    themes = {}
+                    for i in self.get_themes():
+                        themes['theme_' + str(i[0])] = str(i[1])
+                    self.bot.messaging.send_message(
+                        self.bot.users.get_user_peer_by_id(user[0]),
+                        '\U00002705 Тема *%s* создана.' % label,
+                        [
+                            interactive_media.InteractiveMediaGroup(
+                                [
+                                    interactive_media.InteractiveMedia(
+                                        101,
+                                        interactive_media.InteractiveMediaSelect(themes,
+                                                                                 'Выбери тему для настройки')
+                                    ),
+                                    interactive_media.InteractiveMedia(
+                                        102,
+                                        interactive_media.InteractiveMediaButton('add_theme',
+                                                                                 'Добавить тему'),
+                                        'primary'
+                                    ),
+                                    interactive_media.InteractiveMedia(
+                                        103,
+                                        interactive_media.InteractiveMediaButton('back_to_menu',
+                                                                                 'Назад в меню')
+                                    )
+                                ]
+                            )
+                        ]
+                    )
+                    self.set_state(user[0], 'menu')
+                else:
+                    self.bot.messaging.send_message(
+                        self.bot.users.get_user_peer_by_id(user[0]),
+                        'Такой идентификатор уже существует.\n'
+                        'Попробуй еще раз, но с чем-то *уникальным.*'
 
-                                interactive_media.InteractiveMedia(
-                                    1,
-                                    interactive_media.InteractiveMediaButton('no_descr', 'Оставить без описания')
-                                )
-                            ]
-                        )
-                    ]
+                    )
+            else:
+                self.bot.messaging.send_message(
+                    self.bot.users.get_user_peer_by_id(user[0]),
+                    'Мне нужно несколько слов через пробел.\n'
+                    'Попробуй еще раз.'
                 )
-                self.set_state(user[0], 'add_descr')
+        elif state.startswith('add_question_'):
+            theme = state[13:]
+            question, answer = message.strip().split('\n\n')
+            self.add_question(theme, question, answer)
+            self.bot.messaging.send_message(
+                self.bot.users.get_user_peer_by_id(user[0]),
+                'Вопрос добавлен.',
+                [
+                    interactive_media.InteractiveMediaGroup(
+                        [
+                            interactive_media.InteractiveMedia(
+                                114,
+                                interactive_media.InteractiveMediaButton('theme_%s' % theme,
+                                                                         'К списку вопросов'),
+                                'primary'
+                            )
+                        ]
+                    )
+                ]
+            )
+        elif state.startswith('theme_'):
+            theme = state[6:]
+            questions = self.get_questions(theme)
+            questions_ids = [int(i[0]) for i in questions]
+            try:
+                question_id = int(message.strip()) - 1
+                if question_id not in questions_ids:
+                    raise ValueError
+                else:
+                    self.set_state(user[0], 'question_%s' % str(question_id))
+                    question = questions[questions_ids.index(question_id)]
+                    print(question)
+                    self.bot.messaging.send_message(
+                        self.bot.users.get_user_peer_by_id(user[0]),
+                        'Вопрос *%s*\n\n'
+                        '%s' % (str(question[1]), str(question[2])),
+                        [
+                            interactive_media.InteractiveMediaGroup(
+                                [
+                                    interactive_media.InteractiveMedia(
+                                        115,
+                                        interactive_media.InteractiveMediaButton('edit_question_%s_%s' %
+                                                                                 (str(question[0]), theme),
+                                                                                 'Редактировать'),
+                                        'primary'
+                                    ),
+                                    interactive_media.InteractiveMedia(
+                                        116,
+                                        interactive_media.InteractiveMediaButton('delete_question_%s_%s' %
+                                                                                 (str(question[0]), theme),
+                                                                                 'Удалить'),
+                                        'danger'
+                                    ),
+                                    interactive_media.InteractiveMedia(
+                                        117,
+                                        interactive_media.InteractiveMediaButton('theme_%s' % theme,
+                                                                                 'Назад')
+                                    )
+                                ]
+                            )
+                        ]
+                    )
             except ValueError:
                 self.bot.messaging.send_message(
                     self.bot.users.get_user_peer_by_id(user[0]),
-                    'Кажется, это не число \U0001F914'
+                    'Кажется, нет вопроса с таким номером.'
                 )
-        elif state == 'add_descr':
-            state_info = json.loads(user[4])
-            self.spend_action(user, float(state_info['val']), message.strip())
-            self.set_state_info(user[0], '')
-            self.set_state(user[0], 'menu')
 
     def on_click(self, *params):
         user = self.get_user(params[0].uid)
         value = params[0].value
-        if value == 'add':
-            self.set_state(user[0], 'menu')
+        if value == 'themes_manager':
+            self.set_state(user[0], 'themes_manager')
+            themes = {}
+            for i in self.get_themes():
+                themes['theme_' + str(i[0])] = str(i[1])
             self.bot.messaging.send_message(
                 self.bot.users.get_user_peer_by_id(user[0]),
-                'Ты можешь присылать мне любые суммы.\nКаждая будет автоматически добавляться в расходы.'
-            )
-        elif value == 'reset':
-            self.set_state(user[0], 'reset')
-            self.bot.messaging.send_message(
-                self.bot.users.get_user_peer_by_id(user[0]),
-                'Ок, пришли мне новый размер бюджета.'
-            )
-        elif value == 'reset_spending':
-            self.reset_spending()
-            self.bot.messaging.send_message(
-                self.bot.users.get_user_peer_by_id(user[0]),
-                '\U0001F44C Расходы обнулены.'
-            )
-        elif value == 'no_descr':
-            state_info = json.loads(user[4])
-            self.spend_action(user, float(state_info['val']))
-            self.set_state_info(user[0], '')
-            self.set_state(user[0], 'menu')
-        elif value == 'view_spending':
-            data = self.view_spending()
-            budget, spending = self.get_info()
-            self.bot.messaging.send_message(
-                self.bot.users.get_user_peer_by_id(user[0]),
-                '*Список расходов*\n\n'
-                '%s\n\n'
-                'Итого трат: *%s*, остаток: *%s*' % ('\n'.join(['*' + str(i[2]) + ':* ' + str(i[1])
-                                                                if i[2] != ''
-                                                                else '*Без описания:* ' + str(i[1])
-                                                                for i in data]),
-                                                     spending,
-                                                     budget - spending),
+                '\U0001F916 Это панель управления.\n'
+                'Здесь ты можешь управлять темами и вопросами, а также редактировать ответы на них.',
                 [
                     interactive_media.InteractiveMediaGroup(
                         [
+                            interactive_media.InteractiveMedia(
+                                101,
+                                interactive_media.InteractiveMediaSelect(themes,
+                                                                         'Выбери тему для настройки')
+                            ),
+                            interactive_media.InteractiveMedia(
+                                102,
+                                interactive_media.InteractiveMediaButton('add_theme',
+                                                                         'Добавить тему'),
+                                'primary'
+                            ),
+                            interactive_media.InteractiveMedia(
+                                103,
+                                interactive_media.InteractiveMediaButton('back_to_menu',
+                                                                         'Назад в меню')
+                            )
+                        ]
+                    )
+                ]
+            )
+        elif value == 'add_theme':
+            self.set_state(user[0], 'add_theme')
+            self.bot.messaging.send_message(
+                self.bot.users.get_user_peer_by_id(user[0]),
+                'Пришли мне название темы и ее сокращение на английском через пробел.\n'
+                'Например: График работы schedule\n'
+                '*График работы* станет названием, а *schedule* — уникальным идентификатором.'
 
+            )
+        elif value.startswith('theme_'):
+            self.set_state(user[0], value)
+            theme = value[6:]
+            questions = self.get_questions(theme)
+            self.bot.messaging.send_message(
+                self.bot.users.get_user_peer_by_id(user[0]),
+                'Вопросы в теме *%s*\n\n'
+                '%s' % (theme,
+                        '\n'.join([str(questions[i][0] + 1) + '. ' + str(questions[i][1])
+                                   for i in range(len(questions))])),
+                [
+                    interactive_media.InteractiveMediaGroup(
+                        [
                             interactive_media.InteractiveMedia(
-                                1,
-                                interactive_media.InteractiveMediaButton('add', 'Добавить расходы'),
+                                111,
+                                interactive_media.InteractiveMediaButton('add_question_%s' % theme,
+                                                                         'Добавить вопрос'),
                                 'primary'
                             ),
                             interactive_media.InteractiveMedia(
-                                2,
-                                interactive_media.InteractiveMediaButton('reset', 'Изменить бюджет'),
-                                'primary'
-                            ),
-                            interactive_media.InteractiveMedia(
-                                3,
-                                interactive_media.InteractiveMediaButton('view_spending', 'Посмотреть расходы'),
-                                'primary'
-                            ),
-                            interactive_media.InteractiveMedia(
-                                4,
-                                interactive_media.InteractiveMediaButton('reset_spending', 'Обнулить траты'),
+                                112,
+                                interactive_media.InteractiveMediaButton('delete_theme_%s' % theme,
+                                                                         'Удалить тему'),
                                 'danger'
+                            ),
+                            interactive_media.InteractiveMedia(
+                                113,
+                                interactive_media.InteractiveMediaButton('back_to_panel',
+                                                                         'Назад')
+                            )
+                        ]
+                    )
+                ]
+            )
+            if len(questions) > 0:
+                self.bot.messaging.send_message(
+                    self.bot.users.get_user_peer_by_id(user[0]),
+                    'Пришли мне номер вопроса для его просмотра и редактирования.'
+
+                )
+        elif value.startswith('add_question_'):
+            theme = value[13:]
+            self.set_state(user[0], value)
+            self.bot.messaging.send_message(
+                self.bot.users.get_user_peer_by_id(user[0]),
+                '*Добавление вопроса*\n'
+                'Пришли через пустую строку вопрос и ответ на него.\n'
+                'Например:\n'
+                'Как подключиться к Wi-Fi?\n\n'
+                'Для подключения к Wi-Fi введите пароль 12345678.'
+            )
+        elif value == 'back_to_menu':
+            self.set_state(user[0], 'menu')
+            themes = self.get_themes()
+            self.bot.messaging.send_message(
+                self.bot.users.get_user_peer_by_id(user[0]),
+                'Нажми на одну из тем, чтобы посмотреть подробную информацию по ней.',
+                [
+                    interactive_media.InteractiveMediaGroup(
+                        [
+                            interactive_media.InteractiveMedia(
+                                i,
+                                interactive_media.InteractiveMediaButton(themes[i][0], themes[i][1]),
+                                'primary'
+                            ) for i in range(len(themes))
+                        ]
+                    ),
+                    interactive_media.InteractiveMediaGroup(
+                        [
+                            interactive_media.InteractiveMedia(
+                                len(themes) + 1,
+                                interactive_media.InteractiveMediaButton('themes_manager',
+                                                                         'Панель управления базой знаний')
+                            ),
+                            interactive_media.InteractiveMedia(
+                                len(themes) + 2,
+                                interactive_media.InteractiveMediaButton('schedule_manager',
+                                                                         'Менеджер отложенных сообщений')
+                            ),
+                            interactive_media.InteractiveMedia(
+                                len(themes) + 2,
+                                interactive_media.InteractiveMediaButton('add_notice',
+                                                                         'Сделать объявление')
                             )
                         ]
                     )
@@ -209,102 +350,33 @@ class Bot:
         cur.close()
         return True
 
-    def set_budget(self, budget):
+    def get_themes(self):
         cur = self.con.cursor()
-        cur.execute('UPDATE settings SET val = ? WHERE name = "budget"', (float(budget),))
+        themes = cur.execute('SELECT * FROM themes').fetchall()
+        cur.close()
+        return themes
+
+    def add_theme(self, name, label):
+        cur = self.con.cursor()
+        cur.execute('INSERT INTO themes (name, label) VALUES (?, ?)', (str(name), str(label)))
+        cur.execute('CREATE TABLE theme_%s (id INTEGER PRIMARY KEY AUTOINCREMENT, question TEXT, answer TEXT)' % name)
         self.con.commit()
         cur.close()
         return True
 
-    def reset_spending(self):
+    def get_questions(self, theme):
         cur = self.con.cursor()
-        cur.execute('DELETE FROM spending')
+        themes = cur.execute('SELECT * FROM theme_%s' % theme).fetchall()
+        cur.close()
+        return themes
+
+    def add_question(self, theme, question, answer):
+        cur = self.con.cursor()
+        cur.execute('INSERT INTO theme_%s (question, answer) VALUES (?, ?)' % theme, (str(question),
+                                                                                      str(answer)))
         self.con.commit()
         cur.close()
         return True
-
-    def view_spending(self):
-        cur = self.con.cursor()
-        data = cur.execute('SELECT * FROM spending').fetchall()
-        self.con.commit()
-        cur.close()
-        return data
-
-    def spend(self, val, descr):
-        cur = self.con.cursor()
-        cur.execute('INSERT INTO spending (val, descr) VALUES (?, ?)', (float(val), str(descr)))
-        self.con.commit()
-        budget = float(cur.execute('SELECT * FROM settings').fetchone()[1])
-        spending = float(cur.execute('SELECT SUM(val) FROM spending').fetchone()[0])
-        cur.close()
-        deg = (100 - spending / (budget / 100)) * 3.6
-        img = Image.new('RGBA', (180, 210), (0, 0, 0, 0))
-        x = 90
-        y = 120
-        r1 = 85
-        r2 = 55
-        draw = ImageDraw.Draw(img)
-        draw.ellipse((x - r1, y - r1, x + r1, y + r1), fill=(231, 76, 60))
-        draw.ellipse((x - r2, y - r2, x + r2, y + r2), fill=(0, 0, 0, 0))
-        draw.arc((x - r1, y - r1, x + r1, y + r1), 270, 270 + deg, width=30, fill=(89, 109, 131))
-        unicode_font = ImageFont.truetype('DejaVuSans.ttf', 14)
-        unicode_font_b = ImageFont.truetype('DejaVuSans.ttf', 30)
-        msg = 'осталось'
-        w, h = draw.textsize(msg, font=unicode_font)
-        balance = str(round(100 - spending / (budget / 100), 1)) + '%'
-        w_b, h_b = draw.textsize(balance, font=unicode_font_b)
-        draw.text(((x * 2 - w) // 2, 8), msg, font=unicode_font, fill=(0, 0, 0))
-        draw.text(((x * 2 - w_b) // 2, 90 + h_b // 2), balance, font=unicode_font_b, fill=(0, 0, 0))
-        path = 'budget.png'
-        img.save(path, 'PNG')
-        balance = budget - spending
-        return [balance, path]
-
-    def get_info(self):
-        cur = self.con.cursor()
-        budget = float(cur.execute('SELECT * FROM settings').fetchone()[1])
-        try:
-            spending = float(cur.execute('SELECT SUM(val) FROM spending').fetchone()[0])
-        except TypeError:
-            spending = 0.0
-        cur.close()
-        return [budget, spending]
-
-    def spend_action(self, user, val, descr=''):
-        balance, path = self.spend(val, descr)
-        self.bot.messaging.send_message(
-            self.bot.users.get_user_peer_by_id(user[0]),
-            'Остаток: *%s*' % balance,
-            [
-                interactive_media.InteractiveMediaGroup(
-                    [
-
-                        interactive_media.InteractiveMedia(
-                            1,
-                            interactive_media.InteractiveMediaButton('add', 'Добавить расходы'),
-                            'primary'
-                        ),
-                        interactive_media.InteractiveMedia(
-                            2,
-                            interactive_media.InteractiveMediaButton('reset', 'Изменить бюджет'),
-                            'primary'
-                        ),
-                        interactive_media.InteractiveMedia(
-                            3,
-                            interactive_media.InteractiveMediaButton('view_spending', 'Посмотреть расходы'),
-                            'primary'
-                        ),
-                        interactive_media.InteractiveMedia(
-                            4,
-                            interactive_media.InteractiveMediaButton('reset_spending', 'Обнулить траты'),
-                            'danger'
-                        )
-                    ]
-                )
-            ]
-        )
-        self.bot.messaging.send_image(self.bot.users.get_user_peer_by_id(user[0]), path)
-        os.remove(path)
 
 
 bot = Bot()
