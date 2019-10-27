@@ -42,7 +42,7 @@ class Bot:
                         [
                             interactive_media.InteractiveMedia(
                                 i,
-                                interactive_media.InteractiveMediaButton(themes[i][0], themes[i][1]),
+                                interactive_media.InteractiveMediaButton('view_theme_' + themes[i][0], themes[i][1]),
                                 'primary'
                             ) for i in range(len(themes))
                         ]
@@ -118,25 +118,33 @@ class Bot:
                     'Попробуй еще раз.'
                 )
         elif state.startswith('add_question_'):
-            theme = state[13:]
-            question, answer = message.strip().split('\n\n')
-            self.add_question(theme, question, answer)
-            self.bot.messaging.send_message(
-                self.bot.users.get_user_peer_by_id(user[0]),
-                'Вопрос добавлен.',
-                [
-                    interactive_media.InteractiveMediaGroup(
-                        [
-                            interactive_media.InteractiveMedia(
-                                114,
-                                interactive_media.InteractiveMediaButton('theme_%s' % theme,
-                                                                         'К списку вопросов'),
-                                'primary'
-                            )
-                        ]
-                    )
-                ]
-            )
+            try:
+                theme = state[13:]
+                question, answer = message.strip().split('\n\n')
+                self.add_question(theme, question, answer)
+                self.bot.messaging.send_message(
+                    self.bot.users.get_user_peer_by_id(user[0]),
+                    'Вопрос добавлен.',
+                    [
+                        interactive_media.InteractiveMediaGroup(
+                            [
+                                interactive_media.InteractiveMedia(
+                                    114,
+                                    interactive_media.InteractiveMediaButton('theme_%s' % theme,
+                                                                             'К списку вопросов'),
+                                    'primary'
+                                )
+                            ]
+                        )
+                    ]
+                )
+            except ValueError:
+                self.bot.messaging.send_message(
+                    self.bot.users.get_user_peer_by_id(user[0]),
+                    'Я тебя не понял. Мне нужен вопрос и ответ именно в таком формате:\n'
+                    'Вопрос\n\n'
+                    'Ответ'
+                )
         elif state.startswith('theme_'):
             theme = state[6:]
             questions = self.get_questions(theme)
@@ -184,6 +192,13 @@ class Bot:
                     self.bot.users.get_user_peer_by_id(user[0]),
                     'Кажется, нет вопроса с таким номером.'
                 )
+        elif state.startswith('view_theme_'):
+            theme = state[11:]
+            try:
+                question_id = int(message.strip())
+                print(theme, question_id)
+            except ValueError:
+                print('error')
 
     def on_click(self, *params):
         user = self.get_user(params[0].uid)
@@ -232,11 +247,12 @@ class Bot:
         elif value.startswith('theme_'):
             self.set_state(user[0], value)
             theme = value[6:]
+            theme_label = [i[1] for i in self.get_themes() if i[0] == theme][0]
             questions = self.get_questions(theme)
             self.bot.messaging.send_message(
                 self.bot.users.get_user_peer_by_id(user[0]),
                 'Вопросы в теме *%s*\n\n'
-                '%s' % (theme,
+                '%s' % (theme_label,
                         '\n'.join([str(questions[i][0] + 1) + '. ' + str(questions[i][1])
                                    for i in range(len(questions))])),
                 [
@@ -267,7 +283,6 @@ class Bot:
                 self.bot.messaging.send_message(
                     self.bot.users.get_user_peer_by_id(user[0]),
                     'Пришли мне номер вопроса для его просмотра и редактирования.'
-
                 )
         elif value.startswith('add_question_'):
             theme = value[13:]
@@ -280,6 +295,27 @@ class Bot:
                 'Как подключиться к Wi-Fi?\n\n'
                 'Для подключения к Wi-Fi введите пароль 12345678.'
             )
+        elif value.startswith('delete_question_'):
+            question_id = value[16:].split('_')[0]
+            theme = '_'.join(value[16:].split('_')[1:])
+            print(question_id, theme)
+            self.delete_question(theme, question_id)
+            self.bot.messaging.send_message(
+                self.bot.users.get_user_peer_by_id(user[0]),
+                'Вопрос удален.',
+                [
+                    interactive_media.InteractiveMediaGroup(
+                        [
+                            interactive_media.InteractiveMedia(
+                                115,
+                                interactive_media.InteractiveMediaButton('theme_%s' % theme,
+                                                                         'К списку вопросов'),
+                                'primary'
+                            )
+                        ]
+                    )
+                ]
+            )
         elif value == 'back_to_menu':
             self.set_state(user[0], 'menu')
             themes = self.get_themes()
@@ -291,7 +327,7 @@ class Bot:
                         [
                             interactive_media.InteractiveMedia(
                                 i,
-                                interactive_media.InteractiveMediaButton(themes[i][0], themes[i][1]),
+                                interactive_media.InteractiveMediaButton('view_theme_' + themes[i][0], themes[i][1]),
                                 'primary'
                             ) for i in range(len(themes))
                         ]
@@ -316,6 +352,22 @@ class Bot:
                         ]
                     )
                 ]
+            )
+        elif value.startswith('view_theme_'):
+            theme = value[11:]
+            self.set_state(user[0], value)
+            theme_label = [i[1] for i in self.get_themes() if i[0] == theme][0]
+            questions = self.get_questions(theme)
+            self.bot.messaging.send_message(
+                self.bot.users.get_user_peer_by_id(user[0]),
+                'Тема *%s*\n\n'
+                '%s' % (theme_label,
+                        '\n'.join([str(questions[i][0] + 1) + '. ' + str(questions[i][1])
+                                   for i in range(len(questions))]))
+            )
+            self.bot.messaging.send_message(
+                self.bot.users.get_user_peer_by_id(user[0]),
+                'Пришли мне номер вопроса, чтобы узнать ответ на него.'
             )
 
     def get_user(self, uid):
@@ -374,6 +426,13 @@ class Bot:
         cur = self.con.cursor()
         cur.execute('INSERT INTO theme_%s (question, answer) VALUES (?, ?)' % theme, (str(question),
                                                                                       str(answer)))
+        self.con.commit()
+        cur.close()
+        return True
+
+    def delete_question(self, theme, question_id):
+        cur = self.con.cursor()
+        cur.execute('DELETE FROM theme_%s WHERE id = ?' % theme, (str(question_id), ))
         self.con.commit()
         cur.close()
         return True
