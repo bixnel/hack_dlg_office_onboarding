@@ -3,6 +3,7 @@ from dialog_bot_sdk import interactive_media
 import grpc
 import os
 import json
+import time
 import sqlite3
 from dotenv import load_dotenv
 
@@ -18,6 +19,24 @@ class Bot:
         )
         self.bad = []
         self.bot.messaging.on_message_async(self.on_msg, self.on_click)
+        while True:
+            time.sleep(50)
+            cur = self.con.cursor()
+            users = cur.execute('SELECT * FROM users').fetchall()
+            schedule = cur.execute('SELECT * FROM schedule').fetchall()
+            current_time = int(time.time()) / 60
+            for i in schedule:
+                for e in users:
+                    if int(i[3]) <= current_time - int(e[5]) / 60 <= int(i[3]) + 1:
+                        question = self.get_question(str(i[1]), int(i[2]))
+                        self.bot.messaging.send_message(
+                            self.bot.users.get_user_peer_by_id(e[0]),
+                            '\U0001F44B Привет!\n'
+                            'Это автоматическое сообщение, в котором содержится важная для тебя информация '
+                            '(по крайней мере, так подумали наши менеджеры).\n\n'
+                            '*%s*\n'
+                            '%s' % (str(question[1]), str(question[2]))
+                        )
 
     def on_msg(self, *params):
         user = self.get_user(params[0].sender_uid)
@@ -60,7 +79,7 @@ class Bot:
                             ),
                             interactive_media.InteractiveMedia(
                                 len(themes) + 2,
-                                interactive_media.InteractiveMediaButton('add_notice',
+                                interactive_media.InteractiveMediaButton('make_notice',
                                                                          'Сделать объявление')
                             )
                         ]
@@ -246,6 +265,13 @@ class Bot:
                     self.bot.users.get_user_peer_by_id(user[0]),
                     'Кажется, нет вопроса с таким номером.'
                 )
+        elif state == 'make_notice':
+            msg = message.strip()
+            self.make_notice(user[0], msg)
+            self.bot.messaging.send_message(
+                self.bot.users.get_user_peer_by_id(user[0]),
+                '\U00002705 Объявление успешно отправлено всем пользователям.'
+            )
 
     def on_click(self, *params):
         user = self.get_user(params[0].uid)
@@ -332,7 +358,6 @@ class Bot:
                     'Пришли мне номер вопроса для его просмотра и редактирования.'
                 )
         elif value.startswith('add_question_'):
-            theme = value[13:]
             self.set_state(user[0], value)
             self.bot.messaging.send_message(
                 self.bot.users.get_user_peer_by_id(user[0]),
@@ -415,7 +440,7 @@ class Bot:
                             ),
                             interactive_media.InteractiveMedia(
                                 len(themes) + 2,
-                                interactive_media.InteractiveMediaButton('add_notice',
+                                interactive_media.InteractiveMediaButton('make_notice',
                                                                          'Сделать объявление')
                             )
                         ]
@@ -468,6 +493,38 @@ class Bot:
                     )
                 ]
             )
+        elif value == 'schedule_manager':
+            cur = self.con.cursor()
+            schedule = cur.execute('SELECT * FROM schedule').fetchall()
+            themes = {}
+            for i in self.get_themes():
+                themes[str(i[0])] = str(i[1])
+            print(schedule)
+            self.bot.messaging.send_message(
+                self.bot.users.get_user_peer_by_id(user[0]),
+                '*Отложенные сообщения*\n\n'
+                '%s' % '\n'.join([str(i[0]) + '. Гайд №' + str(i[2]) + ' из темы ' + themes[str(i[1])] +
+                                  ' (через ' + str(i[3]) + ' мин)' for i in schedule])
+            )
+        elif value == 'make_notice':
+            self.set_state(user[0], value)
+            self.bot.messaging.send_message(
+                self.bot.users.get_user_peer_by_id(user[0]),
+                'Пришли мне текст уведомления.\n'
+                'Оно будет мгновенно отправлено всем пользователям бота.',
+                [
+                    interactive_media.InteractiveMediaGroup(
+                        [
+                            interactive_media.InteractiveMedia(
+                                118,
+                                interactive_media.InteractiveMediaButton('back_to_menu',
+                                                                         'Отмена'),
+                                'primary'
+                            )
+                        ]
+                    )
+                ]
+            )
         else:
             print(value)
 
@@ -484,10 +541,12 @@ class Bot:
 
     def create_user(self, uid, username='', role='user'):
         cur = self.con.cursor()
-        user = cur.execute('INSERT INTO users(id, username, role, state, state_info) VALUES (?, ?, ?, "menu", "");',
-                           (int(uid), str(username), str(role))).fetchone()
+        cur.execute(
+            'INSERT INTO users(id, username, role, state, state_info, reg_time) VALUES (?, ?, ?, "menu", "", ?);',
+            (int(uid), str(username), str(role), int(time.time())))
+        self.con.commit()
         cur.close()
-        return user if user else None
+        return True
 
     def set_state(self, uid, state):
         cur = self.con.cursor()
@@ -519,7 +578,7 @@ class Bot:
 
     def delete_theme(self, theme):
         cur = self.con.cursor()
-        cur.execute('DELETE FROM themes WHERE name = ?', (str(theme), ))
+        cur.execute('DELETE FROM themes WHERE name = ?', (str(theme),))
         cur.execute('DROP TABLE theme_%s' % str(theme))
         self.con.commit()
         cur.close()
@@ -533,7 +592,7 @@ class Bot:
 
     def get_question(self, theme, question_id):
         cur = self.con.cursor()
-        question = cur.execute('SELECT * FROM theme_%s WHERE id = ?' % theme, (str(question_id), )).fetchone()
+        question = cur.execute('SELECT * FROM theme_%s WHERE id = ?' % theme, (str(question_id),)).fetchone()
         cur.close()
         return question
 
@@ -547,16 +606,34 @@ class Bot:
 
     def add_question(self, theme, question, answer):
         cur = self.con.cursor()
-        cur.execute('INSERT INTO theme_%s (question, answer) VALUES (?, ?)' % theme, (str(question),
-                                                                                      str(answer)))
+        cur.execute('INSERT INTO theme_%s (question, answer) VALUES (?, ?)' % theme, (str(question), str(answer)))
         self.con.commit()
         cur.close()
         return True
 
     def delete_question(self, theme, question_id):
         cur = self.con.cursor()
-        cur.execute('DELETE FROM theme_%s WHERE id = ?' % theme, (str(question_id), ))
+        cur.execute('DELETE FROM theme_%s WHERE id = ?' % theme, (str(question_id),))
         self.con.commit()
+        cur.close()
+        return True
+
+    def get_schedule(self):
+        cur = self.con.cursor()
+        schedule = cur.execute('SELECT * FROM schedule')
+        cur.close()
+        return schedule
+
+    def make_notice(self, uid, msg):
+        cur = self.con.cursor()
+        users = cur.execute('SELECT * FROM users').fetchall()
+        for e in users:
+            if int(e[0]) != uid:
+                self.bot.messaging.send_message(
+                    self.bot.users.get_user_peer_by_id(e[0]),
+                    '\U000026A0 *Объявление от %s :*\n\n'
+                    '%s' % ('@' + str(self.get_user(uid)[1]), str(msg))
+                )
         cur.close()
         return True
 
