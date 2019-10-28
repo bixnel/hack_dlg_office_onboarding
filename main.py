@@ -2,10 +2,9 @@ from dialog_bot_sdk.bot import DialogBot
 from dialog_bot_sdk import interactive_media
 import grpc
 import os
-import sqlite3
 import json
+import sqlite3
 from dotenv import load_dotenv
-from PIL import Image, ImageDraw, ImageFont
 
 
 class Bot:
@@ -124,7 +123,7 @@ class Bot:
                 self.add_question(theme, question, answer)
                 self.bot.messaging.send_message(
                     self.bot.users.get_user_peer_by_id(user[0]),
-                    'Вопрос добавлен.',
+                    '\U00002705 Вопрос добавлен.',
                     [
                         interactive_media.InteractiveMediaGroup(
                             [
@@ -145,18 +144,47 @@ class Bot:
                     'Вопрос\n\n'
                     'Ответ'
                 )
+        elif state.startswith('edit_question_'):
+            question_id = state[14:].split('_')[0]
+            theme = '_'.join(state[14:].split('_')[1:])
+            try:
+                question, answer = message.strip().split('\n\n')
+                self.edit_question(theme, question_id, question, answer)
+                self.bot.messaging.send_message(
+                    self.bot.users.get_user_peer_by_id(user[0]),
+                    '\U00002705 Вопрос отредактирован.',
+                    [
+                        interactive_media.InteractiveMediaGroup(
+                            [
+                                interactive_media.InteractiveMedia(
+                                    114,
+                                    interactive_media.InteractiveMediaButton('theme_%s' % theme,
+                                                                             'К списку вопросов'),
+                                    'primary'
+                                )
+                            ]
+                        )
+                    ]
+                )
+            except ValueError:
+                self.bot.messaging.send_message(
+                    self.bot.users.get_user_peer_by_id(user[0]),
+                    'Я тебя не понял. Мне нужен вопрос и ответ именно в таком формате:\n'
+                    'Вопрос\n\n'
+                    'Ответ'
+                )
+
         elif state.startswith('theme_'):
             theme = state[6:]
             questions = self.get_questions(theme)
             questions_ids = [int(i[0]) for i in questions]
             try:
-                question_id = int(message.strip()) - 1
+                question_id = int(message.strip())
                 if question_id not in questions_ids:
                     raise ValueError
                 else:
-                    self.set_state(user[0], 'question_%s' % str(question_id))
+                    self.set_state(user[0], 'question_%s_%s' % (str(question_id), str(theme)))
                     question = questions[questions_ids.index(question_id)]
-                    print(question)
                     self.bot.messaging.send_message(
                         self.bot.users.get_user_peer_by_id(user[0]),
                         'Вопрос *%s*\n\n'
@@ -196,9 +224,28 @@ class Bot:
             theme = state[11:]
             try:
                 question_id = int(message.strip())
-                print(theme, question_id)
+                answer = self.get_question(theme, question_id)
+                self.bot.messaging.send_message(
+                    self.bot.users.get_user_peer_by_id(user[0]),
+                    '*%s*\n\n'
+                    '%s' % (str(answer[1]), str(answer[2])),
+                    [
+                        interactive_media.InteractiveMediaGroup(
+                            [
+                                interactive_media.InteractiveMedia(
+                                    117,
+                                    interactive_media.InteractiveMediaButton('view_theme_%s' % theme,
+                                                                             'Назад')
+                                )
+                            ]
+                        )
+                    ]
+                )
             except ValueError:
-                print('error')
+                self.bot.messaging.send_message(
+                    self.bot.users.get_user_peer_by_id(user[0]),
+                    'Кажется, нет вопроса с таким номером.'
+                )
 
     def on_click(self, *params):
         user = self.get_user(params[0].uid)
@@ -253,7 +300,7 @@ class Bot:
                 self.bot.users.get_user_peer_by_id(user[0]),
                 'Вопросы в теме *%s*\n\n'
                 '%s' % (theme_label,
-                        '\n'.join([str(questions[i][0] + 1) + '. ' + str(questions[i][1])
+                        '\n'.join([str(questions[i][0]) + '. ' + str(questions[i][1])
                                    for i in range(len(questions))])),
                 [
                     interactive_media.InteractiveMediaGroup(
@@ -272,7 +319,7 @@ class Bot:
                             ),
                             interactive_media.InteractiveMedia(
                                 113,
-                                interactive_media.InteractiveMediaButton('back_to_panel',
+                                interactive_media.InteractiveMediaButton('themes_manager',
                                                                          'Назад')
                             )
                         ]
@@ -298,11 +345,10 @@ class Bot:
         elif value.startswith('delete_question_'):
             question_id = value[16:].split('_')[0]
             theme = '_'.join(value[16:].split('_')[1:])
-            print(question_id, theme)
             self.delete_question(theme, question_id)
             self.bot.messaging.send_message(
                 self.bot.users.get_user_peer_by_id(user[0]),
-                'Вопрос удален.',
+                '\U00002705 Вопрос удален.',
                 [
                     interactive_media.InteractiveMediaGroup(
                         [
@@ -311,6 +357,29 @@ class Bot:
                                 interactive_media.InteractiveMediaButton('theme_%s' % theme,
                                                                          'К списку вопросов'),
                                 'primary'
+                            )
+                        ]
+                    )
+                ]
+            )
+        elif value.startswith('edit_question_'):
+            question_id = value[14:].split('_')[0]
+            theme = '_'.join(value[14:].split('_')[1:])
+            self.set_state(user[0], value)
+            self.set_state_info(user[0], json.dumps({'theme': theme, 'question_id': int(question_id)}))
+            self.bot.messaging.send_message(
+                self.bot.users.get_user_peer_by_id(user[0]),
+                '*Редактирование вопроса*\n'
+                'Пришли через пустую строку новый вопрос и ответ.\n'
+                'Например:\n'
+                'Как подключиться к Wi-Fi?\n\n'
+                'Для подключения к Wi-Fi введите пароль 12345678.',
+                [
+                    interactive_media.InteractiveMediaGroup(
+                        [
+                            interactive_media.InteractiveMedia(
+                                115,
+                                interactive_media.InteractiveMediaButton('theme_%s' % theme, 'Отмена')
                             )
                         ]
                     )
@@ -362,13 +431,45 @@ class Bot:
                 self.bot.users.get_user_peer_by_id(user[0]),
                 'Тема *%s*\n\n'
                 '%s' % (theme_label,
-                        '\n'.join([str(questions[i][0] + 1) + '. ' + str(questions[i][1])
-                                   for i in range(len(questions))]))
+                        '\n'.join([str(questions[i][0]) + '. ' + str(questions[i][1])
+                                   for i in range(len(questions))])),
+                [
+                    interactive_media.InteractiveMediaGroup(
+                        [
+                            interactive_media.InteractiveMedia(
+                                103,
+                                interactive_media.InteractiveMediaButton('back_to_menu',
+                                                                         'Назад в меню')
+                            )
+                        ]
+                    )
+                ]
             )
+            if len(questions) > 0:
+                self.bot.messaging.send_message(
+                    self.bot.users.get_user_peer_by_id(user[0]),
+                    'Пришли мне номер вопроса, чтобы узнать ответ на него.'
+                )
+        elif value.startswith('delete_theme_'):
+            theme = value[13:]
+            self.delete_theme(theme)
             self.bot.messaging.send_message(
                 self.bot.users.get_user_peer_by_id(user[0]),
-                'Пришли мне номер вопроса, чтобы узнать ответ на него.'
+                '\U00002705 Тема *%s* удалена.' % theme,
+                [
+                    interactive_media.InteractiveMediaGroup(
+                        [
+                            interactive_media.InteractiveMedia(
+                                117,
+                                interactive_media.InteractiveMediaButton('themes_manager',
+                                                                         'Назад в панель управления')
+                            )
+                        ]
+                    )
+                ]
             )
+        else:
+            print(value)
 
     def get_user(self, uid):
         cur = self.con.cursor()
@@ -416,11 +517,33 @@ class Bot:
         cur.close()
         return True
 
+    def delete_theme(self, theme):
+        cur = self.con.cursor()
+        cur.execute('DELETE FROM themes WHERE name = ?', (str(theme), ))
+        cur.execute('DROP TABLE theme_%s' % str(theme))
+        self.con.commit()
+        cur.close()
+        return True
+
     def get_questions(self, theme):
         cur = self.con.cursor()
         themes = cur.execute('SELECT * FROM theme_%s' % theme).fetchall()
         cur.close()
         return themes
+
+    def get_question(self, theme, question_id):
+        cur = self.con.cursor()
+        question = cur.execute('SELECT * FROM theme_%s WHERE id = ?' % theme, (str(question_id), )).fetchone()
+        cur.close()
+        return question
+
+    def edit_question(self, theme, question_id, question, answer):
+        cur = self.con.cursor()
+        cur.execute('UPDATE theme_%s SET question = ? WHERE id = ?' % theme, (str(question), str(question_id)))
+        cur.execute('UPDATE theme_%s SET answer = ? WHERE id = ?' % theme, (str(answer), str(question_id)))
+        self.con.commit()
+        cur.close()
+        return True
 
     def add_question(self, theme, question, answer):
         cur = self.con.cursor()
