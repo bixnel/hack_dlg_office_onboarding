@@ -37,6 +37,7 @@ class Bot:
                             '*%s*\n'
                             '%s' % (str(question[1]), str(question[2]))
                         )
+            cur.close()
 
     def on_msg(self, *params):
         user = self.get_user(params[0].sender_uid)
@@ -263,7 +264,7 @@ class Bot:
             except ValueError:
                 self.bot.messaging.send_message(
                     self.bot.users.get_user_peer_by_id(user[0]),
-                    'Кажется, нет вопроса с таким номером.'
+                    'Кажется, нет вопроса с таким номером. Попробуй еще раз.'
                 )
         elif state == 'make_notice':
             msg = message.strip()
@@ -272,6 +273,76 @@ class Bot:
                 self.bot.users.get_user_peer_by_id(user[0]),
                 '\U00002705 Объявление успешно отправлено всем пользователям.'
             )
+        elif state == 'delete_pending_msg':
+            try:
+                msg = int(message.strip())
+                cur = self.con.cursor()
+                schedule = cur.execute('SELECT * FROM schedule').fetchall()
+                schedule_ids = [int(i[0]) for i in schedule]
+                if msg not in schedule_ids:
+                    self.bot.messaging.send_message(
+                        self.bot.users.get_user_peer_by_id(user[0]),
+                        'Сообщения с таким номером нет. Попробуй еще раз.'
+                    )
+                else:
+                    self.delete_schedule(msg)
+                    self.bot.messaging.send_message(
+                        self.bot.users.get_user_peer_by_id(user[0]),
+                        '\U00002705 Отложенное сообщение успешно удалено.',
+                        [
+                            interactive_media.InteractiveMediaGroup(
+                                [
+                                    interactive_media.InteractiveMedia(
+                                        117,
+                                        interactive_media.InteractiveMediaButton('schedule_manager',
+                                                                                 'Назад в менеджер'),
+                                        'primary'
+                                    )
+                                ]
+                            )
+                        ]
+                    )
+            except ValueError:
+                self.bot.messaging.send_message(
+                    self.bot.users.get_user_peer_by_id(user[0]),
+                    'Сообщения с таким номером нет. Попробуй еще раз.'
+                )
+        elif state == 'add_pending_msg':
+            try:
+                question_id, theme, minutes = message.strip().split()
+                self.add_schedule(theme, question_id, minutes)
+                self.bot.messaging.send_message(
+                    self.bot.users.get_user_peer_by_id(user[0]),
+                    '\U00002705 Отложенное сообщение создано.',
+                    [
+                        interactive_media.InteractiveMediaGroup(
+                            [
+                                interactive_media.InteractiveMedia(
+                                    123,
+                                    interactive_media.InteractiveMediaButton('schedule_manager',
+                                                                             'Назад в менеджер'),
+                                    'primary'
+                                )
+                            ]
+                        )
+                    ]
+                )
+            except ValueError:
+                self.bot.messaging.send_message(
+                    self.bot.users.get_user_peer_by_id(user[0]),
+                    'Я тебя не понял. Пришли сообщение, соблюдая формат.',
+                    [
+                        interactive_media.InteractiveMediaGroup(
+                            [
+                                interactive_media.InteractiveMedia(
+                                    124,
+                                    interactive_media.InteractiveMediaButton('schedule_manager',
+                                                                             'Отмена')
+                                )
+                            ]
+                        )
+                    ]
+                )
 
     def on_click(self, *params):
         user = self.get_user(params[0].uid)
@@ -499,12 +570,34 @@ class Bot:
             themes = {}
             for i in self.get_themes():
                 themes[str(i[0])] = str(i[1])
-            print(schedule)
             self.bot.messaging.send_message(
                 self.bot.users.get_user_peer_by_id(user[0]),
                 '*Отложенные сообщения*\n\n'
                 '%s' % '\n'.join([str(i[0]) + '. Гайд №' + str(i[2]) + ' из темы ' + themes[str(i[1])] +
-                                  ' (через ' + str(i[3]) + ' мин)' for i in schedule])
+                                  ' (через ' + str(i[3]) + ' мин)' for i in schedule]),
+                [
+                    interactive_media.InteractiveMediaGroup(
+                        [
+                            interactive_media.InteractiveMedia(
+                                121,
+                                interactive_media.InteractiveMediaButton('add_pending_msg',
+                                                                         'Добавить отложенное сообщение'),
+                                'primary'
+                            ),
+                            interactive_media.InteractiveMedia(
+                                122,
+                                interactive_media.InteractiveMediaButton('delete_pending_msg',
+                                                                         'Удалить отложенное сообщение'),
+                                'danger'
+                            ),
+                            interactive_media.InteractiveMedia(
+                                120,
+                                interactive_media.InteractiveMediaButton('back_to_menu',
+                                                                         'Назад')
+                            )
+                        ]
+                    )
+                ]
             )
         elif value == 'make_notice':
             self.set_state(user[0], value)
@@ -525,8 +618,38 @@ class Bot:
                     )
                 ]
             )
-        else:
-            print(value)
+        elif value == 'delete_pending_msg':
+            self.set_state(user[0], value)
+            self.bot.messaging.send_message(
+                self.bot.users.get_user_peer_by_id(user[0]),
+                'Пришли мне номер сообщения, которое необходимо удалить.',
+                [
+                    interactive_media.InteractiveMediaGroup(
+                        [
+                            interactive_media.InteractiveMedia(
+                                122,
+                                interactive_media.InteractiveMediaButton('schedule_manager',
+                                                                         'Назад')
+                            )
+                        ]
+                    )
+                ]
+            )
+        elif value == 'add_pending_msg':
+            self.set_state(user[0], value)
+            self.bot.messaging.send_message(
+                self.bot.users.get_user_peer_by_id(user[0]),
+                'Пришли мне через пробел номер гайда, идентификатор темы и время *в минутах*'
+                'после регистрации пользователя,'
+                'через которое придет сообщение.\n\n'
+                'Например: 1 office 13\n'
+                'Гайд №1 из темы с идентификатором office придет через 13 минут после регистрации пользователя.',
+            )
+            self.bot.messaging.send_message(
+                self.bot.users.get_user_peer_by_id(user[0]),
+                'На всякий случай держи названия тем:\n'
+                '%s' % '\n'.join([str(i[1]) + ' — ' + str(i[0]) for i in self.get_themes()])
+            )
 
     def get_user(self, uid):
         cur = self.con.cursor()
@@ -623,6 +746,21 @@ class Bot:
         schedule = cur.execute('SELECT * FROM schedule')
         cur.close()
         return schedule
+
+    def delete_schedule(self, msg):
+        cur = self.con.cursor()
+        schedule = cur.execute('DELETE FROM schedule WHERE id = ?', (str(msg),))
+        self.con.commit()
+        cur.close()
+        return True
+
+    def add_schedule(self, theme, question_id, minutes):
+        cur = self.con.cursor()
+        cur.execute('INSERT INTO schedule (theme, question_id, time) VALUES (?, ?, ?)', (str(theme), str(question_id),
+                                                                                         str(minutes)))
+        self.con.commit()
+        cur.close()
+        return True
 
     def make_notice(self, uid, msg):
         cur = self.con.cursor()
